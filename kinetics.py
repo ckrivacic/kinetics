@@ -4,7 +4,7 @@
 Usage:
     kinetics.py [options] <bio96_metadata>
 
-Options (needs updating; some are depreciated and should instead be set
+Options (needs updating; some/most are depreciated and should instead be set
 in the bio96 file):
     --conversion-factor NUMBER, -e NUMBER   [default: 1.0]
         Your units in the csv file will be divided by this.
@@ -28,22 +28,6 @@ in the bio96 file):
     --skip-rows LIST-LIKE, -k LIST-LIKE
         List or range of rows to skip. 
         Ex: 3 5 7:12
-
-
-Note: Make sure your column names are just numbers (concentration units)
-
-Outline (needs to be updated):
-    Import csv using pd.read_csv(name,skiprows=xx,nrows=5)
-    
-    Make sure header has concentration of substrate (let user change
-    units as input option but have default be uM)
-
-    Allow user to input a conversion factor (like extinction
-    coefficient) to get to concentration units on y-axis. 
-
-    Allow user to put in enzyme concentration (default uM) to get kcat. 
-
-    Plot and fit using matplotlib. 
 """
 
 import pandas as pd

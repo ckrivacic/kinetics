@@ -1,0 +1,55 @@
+
+user = 'Cody Krivacic'
+date = '01/22/2019'
+project = 'ksi'
+
+[meta]
+    path = '/home/cody/Documents/kortemme/ksi/june2018_designs/2019-01-22_ksi_s40a_q41a_activity.csv'
+
+[expt]
+    conversion_factor = 16300
+    # Units = 10^6 for uM
+    units = 1000000
+
+[row.A]
+    conc_uM = 2083
+[row.B]
+    conc_uM = 1042
+[row.C]
+    conc_uM = 521
+[row.D]
+    conc_uM = 260
+[row.E]
+    conc_uM = 130
+[row.F]
+    conc_uM = 65
+[row.G]
+    conc_uM = 32.6
+[row.H]
+    conc_uM = 0
+
+[col.1]
+    enzyme = 'Design B3 S40A'
+    replicate = 1
+    enzyme_conc = 1.89
+[col.2]
+    enzyme = 'Design B3 S40A'
+    replicate = 2
+    enzyme_conc = 1.89
+[col.3]
+    enzyme = 'Design B3 S40A'
+    replicate = 3
+    enzyme_conc = 1.89
+[col.4]
+    enzyme = 'Design B3 Q41A'
+    replicate = 1
+    enzyme_conc = 2.04
+[col.5]
+    enzyme = 'Design B3 Q41A'
+    replicate = 2
+    enzyme_conc = 2.04
+[col.6]
+    enzyme = 'Design B3 Q41A'
+    replicate = 3
+    enzyme_conc = 2.04
+    
