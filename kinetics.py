@@ -129,7 +129,7 @@ import dash, dash_table
 import dash_core_components as dcc
 import dash_html_components as html
 import plotly.graph_objs as go
-from itertools import cycle
+from itertools import cycle,islice
 from flask_caching import Cache
 from uuid import uuid4
 
@@ -184,14 +184,15 @@ def serve_layout():
 
 app.layout = serve_layout
 
-colors = cycle(['rgb(57,106,177)','rgb(114,147,203)',
+colors = ['rgb(57,106,177)','rgb(114,147,203)',
         'rgb(218,124,48)','rgb(225,151,76)',
         'rgb(62,150,81)','rgb(132,186,91)',
         'rgb(204,37,41)','rgb(211,94,96)',
         'rgb(83,81,84)','rgb(128,133,133)',
         'rgb(107,76,154)','rgb(144,103,167)',
         'rgb(146,36,40)','rgb(171,104,87)',
-        'rgb(148,139,61)','rgb(204,194,16)'])
+        'rgb(148,139,61)','rgb(204,194,16)']
+
 
 # Dictionary of dataframes indexed by session id. 
 all_data = {}
@@ -217,12 +218,13 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
         clickdat_indices = (local_data.index[(local_data['conc_uM']==clickData_kinetics['points'][0]['x']) &\
                 (local_data['slope']==clickData_kinetics['points'][0]['y'])])
         for i in clickdat_indices:
-            local_data['clicked_kinetics'].iloc[i] = not local_data['clicked_kinetics'][i]
+            local_data.at[i,'clicked_kinetics'] = not local_data['clicked_kinetics'][i]
+    color_cycle = cycle(colors)
+    current_color = colors[0]
 
-
-    for name, group in local_data.groupby(['enzyme','clicked_kinetics']):
-        current_color = next(colors)
+    for name, group in local_data.groupby(['enzyme','clicked_kinetics'],sort=True):
         if name[1] == False:
+            current_color = next(color_cycle)
             points = go.Scatter(
                     x = group['conc_uM'],
                     y = group['slope'],
@@ -239,7 +241,7 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
             line = go.Scatter(
                     x = xnew,
                     y = ynew,
-                    marker={'color':next(colors)},
+                    marker={'color':next(color_cycle)},
                     mode='lines',
                     name=name[0] + ' line')
             nonlinear_traces.append(points)
@@ -257,13 +259,19 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
 
 @cache.memoize()
 def update_linear_graph_global(value,session_id,clickData_linear=None):
-   
+
+    print(clickData_linear) 
     if session_id in all_data:
         local_data = all_data[session_id]
     else:
         local_data = data.copy()
         all_data[session_id] = local_data
-    groups = local_data.groupby(['enzyme', 'conc_uM', 'replicate'])
+    if clickData_linear:
+        clickdat_indices = (local_data.index[(local_data['Time']==clickData_linear['points'][0]['x']) &\
+                (local_data['persecond']==clickData_linear['points'][0]['y'])])
+        for i in clickdat_indices:
+            local_data.at[i,'clicked_linear'] = not local_data['clicked_linear'][i]
+    groups = local_data.groupby(['enzyme','conc_uM', 'replicate','clicked_linear'],sort=True)
     traces = []
     x_min=value[0]
     x_max=value[1]
@@ -272,40 +280,58 @@ def update_linear_graph_global(value,session_id,clickData_linear=None):
     # quicker to fit to. 
     rows_to_add_to_kinetics_df = []
 
+    colors_cycle = cycle(colors)
+    current_color = colors[0]
     for name,group in groups:
         enzyme = name[0]
         conc = name[1]
         replicate = name[2]
+        clicked = name[3]
 
         df = group[(group['Time'] >= x_min) & (group['Time'] <= x_max)]
 
-        xi = df['Time']
-        yi = df['persecond']
-        trace1 = go.Scatter(
-            x = xi,
-            y = yi,
-            mode='markers',
-            marker={'size':7,'color':next(colors)},
-            name=str(enzyme) + ', ' + str(conc) + ' uM '+ str(replicate)
-        )
-        traces.append(trace1)
+        if clicked == False:
+            current_color = next(colors_cycle)
+            xi = df['Time']
+            yi = df['persecond']
+            trace1 = go.Scatter(
+                x = xi,
+                y = yi,
+                mode='markers',
+                marker={'size':7,'color':current_color},
+                name=str(enzyme) + ', ' + str(conc) + ' uM '+ str(replicate)
+            )
+            traces.append(trace1)
 
-        slope, intercept, r_value, p_value, std_err = stats.linregress(xi,yi)
-        line = slope * xi + intercept
+            slope, intercept, r_value, p_value, std_err = stats.linregress(xi,yi)
+            line = slope * xi + intercept
 
-        rows_to_add_to_kinetics_df.append([enzyme, conc, slope,
-                replicate])
-        
-        trace2 = go.Scatter(
-            x = xi,
-            y = line,
-            mode='lines',
-            marker={'color':next(colors)},
-            name=str(enzyme) + ', ' + str(conc) + ' uM '+ str(replicate) + 'line')
-        traces.append(trace2)
+            rows_to_add_to_kinetics_df.append([enzyme, conc, slope,
+                    replicate])
+            
+            trace2 = go.Scatter(
+                x = xi,
+                y = line,
+                mode='lines',
+                marker={'color':next(colors_cycle)},
+                name=str(enzyme) + ', ' + str(conc) + ' uM '+ str(replicate) + 'line')
+            traces.append(trace2)
 
-        local_data.loc[(local_data['enzyme']==enzyme) & \
-        (local_data['conc_uM']==conc) & (local_data['replicate']==replicate),'slope'] = slope
+            local_data.loc[(local_data['enzyme']==enzyme) & \
+            (local_data['conc_uM']==conc) & (local_data['replicate']==replicate),'slope'] = slope
+
+        elif clicked == True:
+            xi = df['Time']
+            yi = df['persecond']
+            points = go.Scatter(
+                    x = xi,
+                    y = yi,
+                    mode='markers',
+                    marker={'symbol':'cross','size':10,'color':current_color},
+                    name='Excluded points for ' + name[0]
+                    )
+            traces.append(points)
+            
 
     dict_list = []
     for row in rows_to_add_to_kinetics_df:
@@ -347,9 +373,10 @@ Update linear graph
 @app.callback(
         dash.dependencies.Output('linear-graph','figure'),
         [dash.dependencies.Input('signal','children'),
-            dash.dependencies.Input('session_id','children')])
-def update_linear_graph(value,session_id):
-    traces = update_linear_graph_global(value,session_id)
+            dash.dependencies.Input('session_id','children'),
+            dash.dependencies.Input('linear-graph','clickData')])
+def update_linear_graph(value,session_id,clickData):
+    traces = update_linear_graph_global(value,session_id,clickData_linear = clickData)
     return{
         'data': traces,
         'layout': go.Layout(
@@ -378,9 +405,11 @@ Update kinetics graph
         dash.dependencies.Input('session_id','children'),
         dash.dependencies.Input('kinetics-graph','clickData')])
 def update_kinetics_graph(value,session_id,clickData):
-    print(clickData)
-    nonlinear_traces = update_kinetics_graph_global(value,session_id,clickData_kinetics=clickData)[0]
-    optimizedParameters = update_kinetics_graph_global(value,session_id,clickData_kinetics=clickData)[1]
+    try:
+        nonlinear_traces = update_kinetics_graph_global(value,session_id,clickData_kinetics=clickData)[0]
+    except:
+        nonlinear_traces = None
+    #optimizedParameters = update_kinetics_graph_global(value,session_id,clickData_kinetics=clickData)[1]
     
     return{
         'data':nonlinear_traces,
@@ -402,13 +431,18 @@ Update kinetics table
 @app.callback(
     dash.dependencies.Output('kinetics-table','data'),
     [dash.dependencies.Input('signal','children'),
-        dash.dependencies.Input('session_id','children')])
-def update_data_table(value,session_id):
-    optimizedParameters = update_kinetics_graph_global(value,session_id)[1]
+        dash.dependencies.Input('session_id','children'),
+        dash.dependencies.Input('kinetics-graph','clickData')])
+def update_data_table(value,session_id,clickData):
+    try:
+        optimizedParameters = update_kinetics_graph_global(value,session_id)[1]
+    except:
+        optimizedParameters = None
     table_data = []
-    for enzyme in optimizedParameters:
-        table_data.append({'enzyme':enzyme, 'km':optimizedParameters[enzyme][0]\
-                , 'kcat':optimizedParameters[enzyme][1]})
+    if optimizedParameters:
+        for enzyme in optimizedParameters:
+            table_data.append({'enzyme':enzyme, 'km':optimizedParameters[enzyme][0]\
+                    , 'kcat':optimizedParameters[enzyme][1]})
     return table_data
 
 
