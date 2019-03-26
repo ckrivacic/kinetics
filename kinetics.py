@@ -164,6 +164,7 @@ def serve_layout():
                 #marks={time: str(time) for time in data['Time']}),
                 included=True,
                 ),
+            dcc.Input(id='max_percent_substrate',type='number'),
 
             dcc.Graph(id='kinetics-graph'),
 
@@ -201,8 +202,9 @@ kinetics_data = {}
 """
 Lots of expensive calculations in the function below.
 """
-@cache.memoize()
+#@cache.memoize()
 def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
+    print('update kinetics graph', value)
 
     if session_id in kinetics_data:
         local_data = kinetics_data[session_id]
@@ -257,7 +259,7 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
     return nonlinear_traces, optimizedParameters_dict
 
 
-@cache.memoize()
+#@cache.memoize()
 def update_linear_graph_global(value,session_id,clickData_linear=None):
 
     print(clickData_linear) 
@@ -359,10 +361,11 @@ Signal callback
 @app.callback(
     dash.dependencies.Output('signal','children'),
     [dash.dependencies.Input('time-slider','value'),
+        dash.dependencies.Input('max_percent_substrate','value')
         ])
-def update_graphs(value):
+def update_graphs(timeslider, max_percent_substrate):
     #global_store(value,session_id)
-    return value
+    return timeslider
 
 
 
