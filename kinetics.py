@@ -164,7 +164,7 @@ def serve_layout():
                 #marks={time: str(time) for time in data['Time']}),
                 included=True,
                 ),
-            dcc.Input(id='max_percent_substrate',type='number'),
+            dcc.Input(id='max-percent-substrate',type='number',value=100),
 
             dcc.Graph(id='kinetics-graph'),
 
@@ -260,7 +260,7 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
 
 
 #@cache.memoize()
-def update_linear_graph_global(value,session_id,clickData_linear=None):
+def update_linear_graph_global(value,session_id,clickData_linear=None,max_percent_substrate=None):
 
     print(clickData_linear) 
     if session_id in all_data:
@@ -355,33 +355,30 @@ def update_linear_graph_global(value,session_id,clickData_linear=None):
 
 
 
-"""
-Signal callback
-"""
-@app.callback(
-    dash.dependencies.Output('signal','children'),
-    [dash.dependencies.Input('time-slider','value'),
-        dash.dependencies.Input('max_percent_substrate','value')
-        ])
-def update_graphs(timeslider, max_percent_substrate):
-    #global_store(value,session_id)
-    return timeslider
-
-
 
 """
 Update linear graph
 """
 
 @app.callback(
-        dash.dependencies.Output('linear-graph','figure'),
-        [dash.dependencies.Input('signal','children'),
+        [dash.dependencies.Output('linear-graph','figure'),
+            dash.dependencies.Output('kinetics-graph','figure'),
+            dash.dependencies.Output('kinetics-table','data')
+            ],
+        [
             dash.dependencies.Input('session_id','children'),
-            dash.dependencies.Input('linear-graph','clickData')])
-def update_linear_graph(value,session_id,clickData):
-    traces = update_linear_graph_global(value,session_id,clickData_linear = clickData)
-    return{
-        'data': traces,
+            dash.dependencies.Input('linear-graph','clickData'),
+            dash.dependencies.Input('kinetics-graph','clickData'),
+            dash.dependencies.Input('time-slider','value'),
+            dash.dependencies.Input('max-percent-substrate','value')
+            ])
+def update_linear_graph(session_id,clickData_linear,clickData_kinetics,timeslider_value,percent_substrate_value):
+    """
+    Update linear graph
+    """
+    linear_traces = update_linear_graph_global(timeslider_value,session_id,clickData_linear = clickData_linear, max_percent_substrate=percent_substrate_value)
+    linear_output = {
+        'data': linear_traces,
         'layout': go.Layout(
             xaxis={
                 'title':'Time (s)',
@@ -396,11 +393,46 @@ def update_linear_graph(value,session_id,clickData):
             title='Time courses'
         )
     }
+    """
+    Update nonlinear graph
+    """
+    try:
+        nonlinear_traces = update_kinetics_graph_global(timeslider_value,session_id,clickData_kinetics=clickData_kinetics)[0]
+    except:
+        nonlinear_traces = None
+
+    nonlinear_output = {
+        'data':nonlinear_traces,
+        'layout':go.Layout(
+            xaxis={
+                'title':'Concentration (uM)'
+            },
+            yaxis={'title':'V0'},
+            margin={'l':40,'b':40,'t':100,'r':10},
+            hovermode='closest',
+            title='Michaelis-Menten Kinetics'
+         )
+    }
+
+    """
+    Update table
+    """
+    try:
+        optimizedParameters = update_kinetics_graph_global(timeslider_value,session_id)[1]
+    except:
+        optimizedParameters = None
+    table_data = []
+    if optimizedParameters:
+        for enzyme in optimizedParameters:
+            table_data.append({'enzyme':enzyme, 'km':optimizedParameters[enzyme][0]\
+                    , 'kcat':optimizedParameters[enzyme][1]})
+
+    return linear_output, nonlinear_output, table_data
 
 
 """
 Update kinetics graph
-"""
+
 
 @app.callback(
     dash.dependencies.Output('kinetics-graph','figure'),
@@ -427,9 +459,7 @@ def update_kinetics_graph(value,session_id,clickData):
          )
     }
 
-"""
 Update kinetics table
-"""
 
 @app.callback(
     dash.dependencies.Output('kinetics-table','data'),
@@ -447,7 +477,7 @@ def update_data_table(value,session_id,clickData):
             table_data.append({'enzyme':enzyme, 'km':optimizedParameters[enzyme][0]\
                     , 'kcat':optimizedParameters[enzyme][1]})
     return table_data
-
+"""
 
 if __name__ == '__main__':
     app.run_server(debug=True)
