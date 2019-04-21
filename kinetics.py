@@ -2,7 +2,7 @@
 """
 
 Usage:
-    kinetics.py [options] <bio96_metadata>
+    kinetics.py [options] (--load <pklfile> | <bio96_metadata>...)
 
 Options (needs updating; some/most are depreciated and should instead be set
 in the bio96 file):
@@ -11,6 +11,15 @@ in the bio96 file):
         It is assumed that this will result in product concentration 
         in molar (M) units. Typically this would be an extinction
         coefficient with units M-1cm-1.
+
+    --correction NUMBER, -c NUMBER [default:1.0]
+        Take product row and divide it by this number. This is for going from cuvettes to wells. 
+
+    --raw
+        Plot raw data only. 
+
+    --zero, -z
+        Subtract zero substrate
 
     --units INTEGER, -u INTEGER   [default: 0] 
         How many orders of magnitude to multiply the data by (after
@@ -32,10 +41,14 @@ in the bio96 file):
 
 import pandas as pd
 from klab import docopt
+import scipy
 from scipy import stats
 import numpy as np
+import pickle as pkl
 import scipy.optimize as opt
 import os, bio96
+
+args = docopt.docopt(__doc__)
 
 def convert_time(x):
     seconds = float(x[0]) * 3600 + float(x[1]) * 60 + float(x[2])
@@ -102,30 +115,99 @@ def load_dataframe(path):
     
     return pd.melt(data,id_vars=['Time'])
 
-
-args = docopt.docopt(__doc__)
-if os.path.isfile(args['<bio96_metadata>']):
-    data = bio96.load(args['<bio96_metadata>'],load_dataframe,{'well':'variable'})[0]
-elif os.path.isdir(args['<bio96_metadata>']):
-    dataframes = []
-    for f in os.listdir(args['<bio96_metadata>']):
-        if f.endswith('.data'):
-            subdata = bio96.load(os.path.join(args['<bio96_metadata>'],f),load_dataframe,{'well':'variable'})[0]
-            #print(subdata)
+def get_data():
+    if os.path.isdir(args['<bio96_metadata>'][0]):
+        dataframes = []
+        for f in os.listdir(args['<bio96_metadata>']):
+            if f.endswith('.data'):
+                subdata = bio96.load(os.path.join(args['<bio96_metadata>'],f),load_dataframe,{'well':'variable'})
+                #print(subdata)
+                dataframes.append(subdata)
+        data = pd.concat(dataframes,ignore_index=True)
+    else:
+        dataframes = []
+        for f in args['<bio96_metadata>']:
+            subdata = bio96.load(f, load_dataframe,{'well':'variable'})
             dataframes.append(subdata)
-    data = pd.concat(dataframes,ignore_index=True)
+        data = pd.concat(dataframes, ignore_index=True)
 
-data = data.dropna()
+    data = data.dropna()
+    raw = args['--raw']
 
-data['product'] = data['units'] * data['value']/data['conversion_factor']
-if 'enzyme_conc' in data:
-    data['persecond'] = data['product'] / data['enzyme_conc']
+    # Subtract the no-substrate well
+    if args['--zero']:
+        import time
+        start_time = time.time()
+        zero_df = data[data['conc_uM']==0]
+        zgroups = zero_df.groupby(['enzyme','date','replicate'])
+        groupdict = {}
+        for name,group in zgroups:
+            if name[0] not in groupdict:
+                groupdict[name[0]]={}
+            if name[1] not in groupdict[name[0]]:
+                groupdict[name[0]][name[1]]={}
+            groupdict[name[0]][name[1]][name[2]]=group
+        for index, row in data.iterrows():
+            enzyme = row['enzyme']
+            date = row['date']
+            replicate = row['replicate']
+            #print(replicate)
+            conc = row['conc_uM']
+            timept = row['Time']
+            zdf = groupdict[enzyme][date][replicate]
+            zero = zdf.loc[zdf['Time']==timept]['value'].tolist()[0]
+            """
+            zero = zero_df.loc[(zero_df['enzyme']==enzyme) & \
+                    (zero_df['date']==date) & \
+                    (zero_df['replicate']==replicate) & \
+                    (zero_df['conc_uM']==conc) & \
+                    (zero_df['Time']==time),
+                    ['conc_uM']]
+            """
+            row['value'] = row['value'] - zero
+            data.iloc[index] = row
+    #print('time to load:', time.time() - start_time)
+
+
+    if raw:
+        data['product'] = data['value']
+    else:
+        data['product'] = data['units'] * data['value']/data['conversion_factor']
+
+    if args['--correction']:
+        correction = float(args['--correction'])
+        data['product'] = data['product'] * correction
+
+
+    if 'enzyme_conc' in data and not raw:
+        data['persecond'] = data['product'] / data['enzyme_conc']
+    else:
+        data['persecond'] = data['product']
+    if 'enzyme_conc' not in data:
+        data['enzyme_conc'] = 1
+    data['clicked_linear'] = False
+    data['clicked_kinetics'] = False
+    data['slope'] = 1
+    data['min_time'] = min(data['Time'])
+    data['max_time'] = max(data['Time'])
+    data['shown'] = True
+
+    return data
+
+def load_session(pklfname):
+    with open(pklfname, 'rb') as pklfile:
+        analysis_data = pkl.load(pklfile)
+    return analysis_data
+
+kinetics = None
+if args['<pklfile>']:
+    analysis_data = load_session(args['<pklfile>'])
+    data = analysis_data['local_data']
+    kinetics = analysis_data['kinetics_df']
+elif args['<bio96_metadata>']:
+    data = get_data()
 else:
-    data['persecond'] = data['product']
-data['clicked_linear'] = False
-data['clicked_kinetics'] = False
-data['slope'] = 1
-
+    print('No data given. Either provide a session via --load or point to a bio96 metadata file.')
 
 # The function we are trying to fit the data to
 def func(S, Km, Vmax):
@@ -161,28 +243,85 @@ cache= Cache()
 cache.init_app(app.server, config=CACHE_CONFIG)
 
 
-def serve_layout():
+# Dictionary of dataframes indexed by session id. 
+all_data = {}
+kinetics_data = {}
+
+
+def serve_layout(data):
     max_time = data['Time'].max()
     session_id = str(uuid4())
+
+    if kinetics is not None:
+        kinetics_data[session_id] = kinetics
+        all_data[session_id] = data
+
+    enzyme_list = []
+    for enzyme in set(data[data['shown']==True]['enzyme']):
+        enzyme_list.append({'label':enzyme,'value':enzyme})
+
+    conc_list = []
+    for conc in set(data[data['shown']==True]['conc_uM']):
+        conc_list.append({'label':str(conc) + ' uM','value':conc})
+
+    replicate_list = []
+    for rep in set(data[data['shown']==True]['replicate']):
+        replicate_list.append({'label':'Replicate ' + str(rep), 'value':rep})
+
+    date_list = []
+    for date in set(data[data['shown']==True]['date']):
+        date_list.append({'label':date,'value':date})
+
     return html.Div([
         html.Div([
 
-            dcc.Graph(id='linear-graph',
+            dcc.Dropdown(
+                id='enzyme-dropdown',
+                options=enzyme_list,
+                placeholder='Filter by enzyme...',
+                multi=True
             ),
 
-            dcc.RangeSlider(
-                id='time-slider',
-                min=data['Time'].min(),
-                max=data['Time'].max(),
-                value=[data['Time'].min(),data['Time'].max()],
-                marks={(0):{'label':'0 min'},
-                    str(data['Time'].max()): {'label':'{} min'.format(max_time)}},
-                #marks={time: str(time) for time in data['Time']}),
-                included=True,
+            dcc.Dropdown(
+                id='conc-dropdown',
+                options=conc_list,
+                placeholder='Filter by concentration...',
+                multi=True
+            ),
+
+            dcc.Dropdown(
+                id='rep-dropdown',
+                options=replicate_list,
+                placeholder='Filter by replicate...',
+                multi=True
+            ),
+
+            dcc.Dropdown(
+                id='date-dropdown',
+                options=date_list,
+                placeholder='Filter by date...',
+                multi=True
+            ),
+
+            html.Button(id='filter-button',n_clicks=0,children='Filter'),
+
+            dcc.Graph(id='linear-graph',
+            ),
+            dcc.RadioItems(
+                id='fit-type',
+                options=[
+                    {'label':'Linear','value':'linear'},
+                    {'label':'Exponential','value':'exponential'}
+                ],
+                value='linear'
                 ),
             dcc.Input(id='min-time',type='number',value=data['Time'].min()),
             dcc.Input(id='max-time',type='number',value=data['Time'].max()),
             dcc.Input(id='max-percent-substrate',type='number',value=100),
+
+            html.Button(id='submit-button',n_clicks=0,children='Submit'),
+
+            html.Button(id='save-button',n_clicks=0,children='Save analysis progress'),
 
             dcc.Graph(id='kinetics-graph'),
 
@@ -191,18 +330,24 @@ def serve_layout():
                     [{'id':'enzyme','name':'Enzyme'},
                         {'id':'km','name':'Km'},
                         {'id':'kcat','name':'kcat'}]),
-            )
+            ),
+
+            dcc.Textarea(
+                    id='log',
+                    style={'width':'100%'},
+                    disabled='True',
+                    value='Log info goes here'
+                )
             
             
             ],style={'padding':50}),
 
-        #html.Div(id='signal', style={'display':'none'}),
         html.Div(session_id,id='session_id',
             style={'display':'none','padding':10})
 
         ],style={'padding':10})
 
-app.layout = serve_layout
+app.layout = serve_layout(data)
 
 colors = ['rgb(57,106,177)','rgb(114,147,203)',
         'rgb(218,124,48)','rgb(225,151,76)',
@@ -214,9 +359,6 @@ colors = ['rgb(57,106,177)','rgb(114,147,203)',
         'rgb(148,139,61)','rgb(204,194,16)']
 
 
-# Dictionary of dataframes indexed by session id. 
-all_data = {}
-kinetics_data = {}
 
 """
 Lots of expensive calculations in the function below.
@@ -239,6 +381,7 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
                 (local_data['slope']==clickData_kinetics['points'][0]['y'])])
         for i in clickdat_indices:
             local_data.at[i,'clicked_kinetics'] = not local_data['clicked_kinetics'][i]
+    kinetics_data[session_id] = local_data
     color_cycle = cycle(colors)
     current_color = colors[0]
 
@@ -251,9 +394,7 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
                     mode='markers',
                     marker={'size':10,'color':current_color},
                     name=name[1] + '_' + name[0])
-
-            optimizedParameters,pcov = opt.curve_fit(func, group['conc_uM'],
-                    group['slope'])
+            optimizedParameters,pcov = opt.curve_fit(func, group['conc_uM'], group['slope'])
             optimizedParameters_dict[name[1]+name[0]] = optimizedParameters
             xnew = np.linspace(min(group['conc_uM']),max(group['conc_uM']),100)
             ynew = func(xnew, optimizedParameters[0],optimizedParameters[1])
@@ -277,8 +418,9 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
     return nonlinear_traces, optimizedParameters_dict
 
 
-#@cache.memoize()
-def update_linear_graph_global(value,session_id,clickData_linear=None,max_percent_substrate=None):
+@cache.memoize()
+def update_linear_graph_global(value,session_id,fit_type='linear',clickData_linear=None,max_percent_substrate=None,
+        filters={'enzyme':[],'conc_uM':[],'replicate':[],'date':[]},update_time=True,update_linear=True):
 
     if session_id in all_data:
         local_data = all_data[session_id]
@@ -286,18 +428,26 @@ def update_linear_graph_global(value,session_id,clickData_linear=None,max_percen
         local_data = data.copy()
         all_data[session_id] = local_data
 
-    if max_percent_substrate:
-        local_data = local_data[local_data['product'] / local_data['conc_uM'] <= max_percent_substrate/100]
+    if filters:
+        for f in filters:
+            if not filters[f]: # is the list empty?
+                filters[f] = list(set(local_data[f]))
 
+    local_data['shown'] = False
+    local_data.loc[(local_data['enzyme'].isin(filters['enzyme'])) & \
+            (local_data['date'].isin(filters['date'])) & \
+            (local_data['replicate'].isin(filters['replicate'])) & \
+            (local_data['conc_uM'].isin(filters['conc_uM'])),'shown'] = True
+    if update_time:
+        local_data.loc[local_data['shown'] == True,'min_time'] = value[0]
+        local_data.loc[local_data['shown'] == True,'max_time'] = value[1]
     if clickData_linear:
         clickdat_indices = (local_data.index[(local_data['Time']==clickData_linear['points'][0]['x']) &\
-                (local_data['persecond']==clickData_linear['points'][0]['y'])])
+                (local_data['product']==clickData_linear['points'][0]['y'])])
         for i in clickdat_indices:
             local_data.at[i,'clicked_linear'] = not local_data['clicked_linear'][i]
-    groups = local_data.groupby(['date','enzyme','conc_uM', 'replicate','clicked_linear'],sort=True)
+    groups = local_data.groupby(['date','enzyme','conc_uM', 'replicate','clicked_linear','shown'],sort=True)
     traces = []
-    x_min=value[0]
-    x_max=value[1]
 
     # Keep track of slopes so we can make a smaller dataframe which is
     # quicker to fit to. 
@@ -311,13 +461,17 @@ def update_linear_graph_global(value,session_id,clickData_linear=None,max_percen
         conc = name[2]
         replicate = name[3]
         clicked = name[4]
+        shown = name[5]
 
-        df = group[(group['Time'] >= x_min) & (group['Time'] <= x_max)]
+        if max_percent_substrate and conc != 0:
+            min_product = min(group['product'])
+            group = group[(group['product'] - min_product) / group['conc_uM'] <= max_percent_substrate/100]
+        df = group[(group['Time'] >= group['min_time']) & (group['Time'] <= group['max_time'])]
 
-        if clicked == False:
+        if clicked == False and shown == True:
             current_color = next(colors_cycle)
             xi = df['Time']
-            yi = df['persecond']
+            yi = df['product']
             trace1 = go.Scatter(
                 x = xi,
                 y = yi,
@@ -327,54 +481,119 @@ def update_linear_graph_global(value,session_id,clickData_linear=None,max_percen
             )
             traces.append(trace1)
 
-            slope, intercept, r_value, p_value, std_err = stats.linregress(xi,yi)
-            line = slope * xi + intercept
+            slope = None
+            line = None
+            skip = False
+            plateau = None
 
-            rows_to_add_to_kinetics_df.append([enzyme, conc, slope,
-                    replicate,date])
-            
-            trace2 = go.Scatter(
-                x = xi,
-                y = line,
-                mode='lines',
-                marker={'color':next(colors_cycle)},
-                name=str(enzyme) + ', ' + str(conc) + ' uM '+ str(replicate)  + '_' + str(date) + 'line')
-            traces.append(trace2)
+            if fit_type == 'linear' or conc == 0 or enzyme == 'None':
+                enzyme_conc = list(set(group['enzyme_conc']))[0]
+                try:
+                    slope, intercept, r_value, p_value, std_err = stats.linregress(xi,yi)
+                    line = slope * xi + intercept
+                    if len(xi) > 3:
+                        rows_to_add_to_kinetics_df.append([enzyme, conc, slope/enzyme_conc,
+                                replicate,date])
+                    if len(xi)==1:
+                        skip = True
+                except:
+                    print('No fit found for ' + enzyme + ' replicate ' + str(replicate) + ' conc. ' + str(conc))
+                    skip = True
+            elif fit_type == 'exponential':
+                if conc != 0:
+                    try:
+                        
+                        cguess = conc/(10*150)
+                        s0,c, slope = scipy.optimize.curve_fit(lambda t, s0,c, k: c + s0 * np.exp(-k * t), xi, yi,p0=((conc/150),cguess,0.001),maxfev=2000)[0]
+                        line = (c + s0 * np.exp(-slope * xi))
+                        plateau = c
+                        rows_to_add_to_kinetics_df.append([enzyme, conc, plateau,
+                                replicate,date])
+                    except:
+                        print('No fit found for ' + enzyme + ' replicate ' + str(replicate) + ' conc. ' + str(conc))
+                        skip = True
 
-            local_data.loc[(local_data['enzyme']==enzyme) & \
-            (local_data['conc_uM']==conc) & (local_data['replicate']==replicate),'slope'] = slope
+            if not skip: 
+                trace2 = go.Scatter(
+                    x = xi,
+                    y = line,
+                    mode='lines',
+                    marker={'color':next(colors_cycle)},
+                    name=str(enzyme) + ', ' + str(conc) + ' uM '+ str(replicate)  + '_' + str(date) + 'line')
+                traces.append(trace2)
 
-        elif clicked == True:
+                if fit_type == 'linear':
+                    local_data.loc[(local_data['enzyme']==enzyme) & \
+                    (local_data['conc_uM']==conc) & (local_data['replicate']==replicate) & \
+                    (local_data['date']==date),'slope'] = slope
+                elif fit_type == 'exponential':
+                    local_data.loc[(local_data['enzyme']==enzyme) & \
+                    (local_data['conc_uM']==conc) & (local_data['replicate']==replicate) & \
+                    (local_data['date']==date),'slope'] = plateau
+            else:
+                local_data.loc[(local_data['enzyme']==enzyme) & \
+                (local_data['conc_uM']==conc) & (local_data['replicate']==replicate) & \
+                (local_data['date'] == date),'slope'] = 0
+
+        elif clicked == True and shown == True:
             xi = df['Time']
-            yi = df['persecond']
+            yi = df['product']
             points = go.Scatter(
                     x = xi,
                     y = yi,
                     mode='markers',
                     marker={'symbol':'cross','size':10,'color':current_color},
-                    name='Excluded points for ' + nstr(enzyme) + ', ' + str(conc) + ' uM '+ str(replicate)  + '_' + str(date)
+                    name='Excluded points for ' + str(enzyme) + ', ' + str(conc) + ' uM '+ str(replicate)  + '_' + str(date)
                     )
             traces.append(points)
             
+    if update_linear == True:
+        dict_list = []
+        for row in rows_to_add_to_kinetics_df:
+            dict1 = {}
+            dict1['enzyme'] = row[0]
+            dict1['conc_uM'] = row[1]
+            dict1['slope'] = row[2]
+            dict1['replicate'] = row[3]
+            dict1['date'] = row[4]
 
-    dict_list = []
-    for row in rows_to_add_to_kinetics_df:
-        dict1 = {}
-        dict1['enzyme'] = row[0]
-        dict1['conc_uM'] = row[1]
-        dict1['slope'] = row[2]
-        dict1['replicate'] = row[3]
-        dict1['date'] = row[4]
+            dict_list.append(dict1)
+        kinetics_df = pd.DataFrame(dict_list)
+        kinetics_df['clicked_kinetics'] = False
 
-        dict_list.append(dict1)
-    kinetics_df = pd.DataFrame(dict_list)
-    kinetics_df['clicked_kinetics'] = False
-
-    kinetics_data[session_id] = kinetics_df
+        kinetics_data[session_id] = kinetics_df
 
 
-    update_kinetics_graph_global(value,session_id)
+    #update_kinetics_graph_global(value,session_id)
     return traces
+
+
+general_data = {}
+
+@app.callback([dash.dependencies.Output('log','value')],
+        [dash.dependencies.Input('save-button','n_clicks')],
+        [dash.dependencies.State('session_id','children'),
+            dash.dependencies.State('log','value')]
+        )
+def save_progress(n_clicks,session_id,logtext):
+    analysis_data = {}
+    analysis_data['local_data'] = all_data[session_id]
+    analysis_data['kinetics_df'] = kinetics_data[session_id]
+    infile = args['<bio96_metadata>']
+    if infile:
+        if os.path.isfile(infile):
+            outfname = infile + '.pkl'
+        else:
+            outfname = os.path.join(infile,session_id + '.pkl')
+    else:
+        outfname = args['<pklfile>']
+
+    newtext = 'Saving to ' + outfname
+    
+    with open(outfname,'wb') as outfile:
+        pkl.dump(analysis_data,outfile)
+    return([logtext + '\n' + newtext])
+
 
 
 
@@ -383,26 +602,49 @@ def update_linear_graph_global(value,session_id,clickData_linear=None,max_percen
 Update linear graph
 """
 
+
 @app.callback(
         [dash.dependencies.Output('linear-graph','figure'),
             dash.dependencies.Output('kinetics-graph','figure'),
             dash.dependencies.Output('kinetics-table','data'),
-            ],
-        [
-            dash.dependencies.Input('session_id','children'),
+            ],        
+        [dash.dependencies.Input('submit-button','n_clicks'),
+            dash.dependencies.Input('filter-button','n_clicks'),
             dash.dependencies.Input('linear-graph','clickData'),
             dash.dependencies.Input('kinetics-graph','clickData'),
-            dash.dependencies.Input('time-slider','value'),
-            dash.dependencies.Input('max-percent-substrate','value'),
-            dash.dependencies.Input('min-time','value'),
-            dash.dependencies.Input('max-time','value')
+        ],
+        [
+            dash.dependencies.State('session_id','children'),
+            dash.dependencies.State('max-percent-substrate','value'),
+            dash.dependencies.State('min-time','value'),
+            dash.dependencies.State('max-time','value'),
+            dash.dependencies.State('fit-type','value'),
+            dash.dependencies.State('enzyme-dropdown','value'),
+            dash.dependencies.State('conc-dropdown','value'),
+            dash.dependencies.State('rep-dropdown','value'),
+            dash.dependencies.State('date-dropdown','value')
             ])
-def update_linear_graph(session_id,clickData_linear,clickData_kinetics,timeslider_value,percent_substrate_value,min_time,max_time):
+def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickData_kinetics,session_id,percent_substrate_value,min_time,max_time,fit_type,
+        enzyme_filter,conc_filter,rep_filter,date_filter):
     """
     Update linear graph
     """
     timeslider_value = [min_time,max_time]
-    linear_traces = update_linear_graph_global(timeslider_value,session_id,clickData_linear = clickData_linear, max_percent_substrate=percent_substrate_value)
+    if not session_id in general_data:
+        general_data[session_id] = {'min-time':min_time,'max-time':max_time,'percent_substrate_value':percent_substrate_value,'clickData_linear':clickData_linear,'clickData_kinetics':clickData_kinetics,'n_clicks_submit':n_clicks_submit,'n_clicks_filter':n_clicks_filter}
+
+    update_time = False 
+    if n_clicks_submit==general_data[session_id]['n_clicks_submit']:
+        update_time = False
+    else:
+        update_time = True
+   
+    update_linear = True
+    if clickData_kinetics != general_data[session_id]['clickData_kinetics']:
+        update_linear = False
+        general_data[session_id]['clickData_kinetics'] = clickData_kinetics
+    linear_traces = update_linear_graph_global(timeslider_value,session_id,fit_type,clickData_linear = clickData_linear, max_percent_substrate=percent_substrate_value,
+            filters={'enzyme':enzyme_filter,'conc_uM':conc_filter,'replicate':rep_filter,'date':date_filter},update_time=update_time,update_linear=update_linear)
     linear_output = {
         'data': linear_traces,
         'layout': go.Layout(
@@ -453,57 +695,10 @@ def update_linear_graph(session_id,clickData_linear,clickData_kinetics,timeslide
             table_data.append({'enzyme':enzyme, 'km':optimizedParameters[enzyme][0]\
                     , 'kcat':optimizedParameters[enzyme][1]})
 
+    general_data[session_id] = {'min-time':min_time,'max-time':max_time,'percent_substrate_value':percent_substrate_value,'clickData_linear':clickData_linear,'clickData_kinetics':clickData_kinetics,'n_clicks_submit':n_clicks_submit,'n_clicks_filter':n_clicks_filter}
     return linear_output, nonlinear_output, table_data
 
 
-"""
-Update kinetics graph
-
-
-@app.callback(
-    dash.dependencies.Output('kinetics-graph','figure'),
-    [dash.dependencies.Input('signal','children'),
-        dash.dependencies.Input('session_id','children'),
-        dash.dependencies.Input('kinetics-graph','clickData')])
-def update_kinetics_graph(value,session_id,clickData):
-    try:
-        nonlinear_traces = update_kinetics_graph_global(value,session_id,clickData_kinetics=clickData)[0]
-    except:
-        nonlinear_traces = None
-    #optimizedParameters = update_kinetics_graph_global(value,session_id,clickData_kinetics=clickData)[1]
-    
-    return{
-        'data':nonlinear_traces,
-        'layout':go.Layout(
-            xaxis={
-                'title':'Concentration (uM)'
-            },
-            yaxis={'title':'V0'},
-            margin={'l':40,'b':40,'t':100,'r':10},
-            hovermode='closest',
-            title='Michaelis-Menten Kinetics'
-         )
-    }
-
-Update kinetics table
-
-@app.callback(
-    dash.dependencies.Output('kinetics-table','data'),
-    [dash.dependencies.Input('signal','children'),
-        dash.dependencies.Input('session_id','children'),
-        dash.dependencies.Input('kinetics-graph','clickData')])
-def update_data_table(value,session_id,clickData):
-    try:
-        optimizedParameters = update_kinetics_graph_global(value,session_id)[1]
-    except:
-        optimizedParameters = None
-    table_data = []
-    if optimizedParameters:
-        for enzyme in optimizedParameters:
-            table_data.append({'enzyme':enzyme, 'km':optimizedParameters[enzyme][0]\
-                    , 'kcat':optimizedParameters[enzyme][1]})
-    return table_data
-"""
 
 if __name__ == '__main__':
     app.run_server(debug=True,host='0.0.0.0',port=8080)
