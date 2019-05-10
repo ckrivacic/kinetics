@@ -21,6 +21,8 @@ in the bio96 file):
     --zero, -z
         Subtract zero substrate
 
+    --zerokinetics, -i
+
     --units INTEGER, -u INTEGER   [default: 0] 
         How many orders of magnitude to multiply the data by (after
         applying the conversion factor)
@@ -503,7 +505,7 @@ def update_linear_graph_global(value,session_id,fit_type='linear',clickData_line
                 if conc != 0:
                     try:
                         
-                        cguess = conc/(10*150)
+                        cguess = conc/(10*450)
                         s0,c, slope = scipy.optimize.curve_fit(lambda t, s0,c, k: c + s0 * np.exp(-k * t), xi, yi,p0=((conc/150),cguess,0.001),maxfev=2000)[0]
                         line = (c + s0 * np.exp(-slope * xi))
                         plateau = c
@@ -559,6 +561,35 @@ def update_linear_graph_global(value,session_id,fit_type='linear',clickData_line
 
             dict_list.append(dict1)
         kinetics_df = pd.DataFrame(dict_list)
+        if args['--zerokinetics']:
+            try:
+                zero_df = kinetics_df[kinetics_df['conc_uM']==0]
+                zgroups = zero_df.groupby(['enzyme','date','replicate'])
+                groupdict = {}
+                for name,group in zgroups:
+                    if name[0] not in groupdict:
+                        groupdict[name[0]]={}
+                    if name[1] not in groupdict[name[0]]:
+                        groupdict[name[0]][name[1]]={}
+                    groupdict[name[0]][name[1]][name[2]]=group
+                for index, row in kinetics_df.iterrows():
+                    enzyme = row['enzyme']
+                    date = row['date']
+                    replicate = row['replicate']
+                    conc = row['conc_uM']
+                    slope = row['slope']
+
+                    try:
+                        zdf = groupdict[enzyme][date][replicate]
+                        zero= zdf['slope'].tolist()[0]
+
+                        row['slope'] = row['slope'] - zero
+                        kinetics_df.iloc[index] = row
+                    except:
+                        break
+            except:
+                print("skipping zeroing")
+
         kinetics_df['clicked_kinetics'] = False
 
         kinetics_data[session_id] = kinetics_df
@@ -581,8 +612,8 @@ def save_progress(n_clicks,session_id,logtext):
     analysis_data['kinetics_df'] = kinetics_data[session_id]
     infile = args['<bio96_metadata>']
     if infile:
-        if os.path.isfile(infile):
-            outfname = infile + '.pkl'
+        if os.path.isfile(infile[0]):
+            outfname = infile[0] + str(session_id) + '.pkl'
         else:
             outfname = os.path.join(infile,session_id + '.pkl')
     else:
