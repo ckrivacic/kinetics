@@ -48,7 +48,7 @@ from scipy import stats
 import numpy as np
 import pickle as pkl
 import scipy.optimize as opt
-import os, bio96
+import os, bio96, sys
 
 args = docopt.docopt(__doc__)
 
@@ -325,13 +325,19 @@ def serve_layout(data):
 
             html.Button(id='save-button',n_clicks=0,children='Save analysis progress'),
 
+            dcc.Input(id='p0-c',type='number',value='50'),
+            dcc.Input(id='p0-s0',type='number',value='30'),
+            dcc.Input(id='p0-k',type='number',value='0.01'),
+
             dcc.Graph(id='kinetics-graph'),
 
             dash_table.DataTable(id='kinetics-table',
                 columns=(
                     [{'id':'enzyme','name':'Enzyme'},
                         {'id':'km','name':'Km'},
-                        {'id':'kcat','name':'kcat'}]),
+                        {'id':'km stdev','name':'Km std dev errors'},
+                        {'id':'kcat','name':'kcat'},
+                        {'id':'kcat stdev','name':'kcat std dev errors'}]),
             ),
 
             dcc.Textarea(
@@ -376,6 +382,7 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
 
     nonlinear_traces = []
     optimizedParameters_dict = {}
+    err_dict = {}
     # If we're here because a point was clicked on the kinetics graph,
     # update the local_data. 
     if clickData_kinetics:
@@ -397,6 +404,7 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
                     marker={'size':10,'color':current_color},
                     name=name[1] + '_' + name[0])
             optimizedParameters,pcov = opt.curve_fit(func, group['conc_uM'], group['slope'])
+            err_dict[name[1]+name[0]] = np.sqrt(np.diag(pcov))
             optimizedParameters_dict[name[1]+name[0]] = optimizedParameters
             xnew = np.linspace(min(group['conc_uM']),max(group['conc_uM']),100)
             ynew = func(xnew, optimizedParameters[0],optimizedParameters[1])
@@ -417,12 +425,12 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
                     marker={'symbol':'cross','size':10,'color':current_color},
                     name='Excluded points for ' + name[1] + '_' + name[0])
             nonlinear_traces.append(points)
-    return nonlinear_traces, optimizedParameters_dict
+    return nonlinear_traces, optimizedParameters_dict, err_dict
 
 
 @cache.memoize()
 def update_linear_graph_global(value,session_id,fit_type='linear',clickData_linear=None,max_percent_substrate=None,
-        filters={'enzyme':[],'conc_uM':[],'replicate':[],'date':[]},update_time=True,update_linear=True):
+        filters={'enzyme':[],'conc_uM':[],'replicate':[],'date':[]},update_time=True,update_linear=True,p0_c=50,p0_s0=30,p0_k=0.01):
 
     if session_id in all_data:
         local_data = all_data[session_id]
@@ -488,8 +496,8 @@ def update_linear_graph_global(value,session_id,fit_type='linear',clickData_line
             skip = False
             plateau = None
 
-            if fit_type == 'linear' or conc == 0 or enzyme == 'None':
-                enzyme_conc = list(set(group['enzyme_conc']))[0]
+            enzyme_conc = list(set(group['enzyme_conc']))[0]
+            if fit_type == 'linear': #or conc == 0 or enzyme == 'None':
                 try:
                     slope, intercept, r_value, p_value, std_err = stats.linregress(xi,yi)
                     line = slope * xi + intercept
@@ -502,18 +510,27 @@ def update_linear_graph_global(value,session_id,fit_type='linear',clickData_line
                     print('No fit found for ' + enzyme + ' replicate ' + str(replicate) + ' conc. ' + str(conc))
                     skip = True
             elif fit_type == 'exponential':
-                if conc != 0:
-                    try:
-                        
-                        cguess = conc/(10*450)
-                        s0,c, slope = scipy.optimize.curve_fit(lambda t, s0,c, k: c + s0 * np.exp(-k * t), xi, yi,p0=((conc/150),cguess,0.001),maxfev=2000)[0]
-                        line = (c + s0 * np.exp(-slope * xi))
-                        plateau = c
-                        rows_to_add_to_kinetics_df.append([enzyme, conc, plateau,
-                                replicate,date])
-                    except:
-                        print('No fit found for ' + enzyme + ' replicate ' + str(replicate) + ' conc. ' + str(conc))
-                        skip = True
+                #if conc != 0:
+                try:
+                
+                #cguess = conc/(10*450)
+                #cguess = 80
+                    print('Fitting using the following initial parameters for A0, c, and k:')
+                    print(p0_s0, p0_c, p0_k)
+
+                    s0,c, slope = scipy.optimize.curve_fit(lambda t, s0,c, k: c - s0 * np.exp(-k * t), xi, yi,p0=(p0_s0,p0_c,p0_k),maxfev=2000)[0]
+                    line = (c - s0 * np.exp(-slope * xi))
+                    print('Fit ' + enzyme + ' replicate ' + str(replicate) + ' conc. ' + str(conc) + ' with the following parameters:')
+                    print('A0: ' + str(s0))
+                    print('c: ' + str(c))
+                    print('k: ' + str(slope))
+                    plateau = c
+                    v0 = (slope * s0) / enzyme_conc
+                    rows_to_add_to_kinetics_df.append([enzyme, conc, v0,
+                            replicate,date])
+                except:
+                    print('No fit found for ' + enzyme + ' replicate ' + str(replicate) + ' conc. ' + str(conc))
+                    skip = True
 
             if not skip: 
                 trace2 = go.Scatter(
@@ -653,16 +670,19 @@ Update linear graph
             dash.dependencies.State('enzyme-dropdown','value'),
             dash.dependencies.State('conc-dropdown','value'),
             dash.dependencies.State('rep-dropdown','value'),
-            dash.dependencies.State('date-dropdown','value')
+            dash.dependencies.State('date-dropdown','value'),
+            dash.dependencies.State('p0-c','value'),
+            dash.dependencies.State('p0-s0','value'),
+            dash.dependencies.State('p0-k','value')
             ])
 def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickData_kinetics,session_id,percent_substrate_value,min_time,max_time,fit_type,
-        enzyme_filter,conc_filter,rep_filter,date_filter):
+        enzyme_filter,conc_filter,rep_filter,date_filter,p0_c,p0_s0,p0_k):
     """
     Update linear graph
     """
     timeslider_value = [min_time,max_time]
     if not session_id in general_data:
-        general_data[session_id] = {'min-time':min_time,'max-time':max_time,'percent_substrate_value':percent_substrate_value,'clickData_linear':clickData_linear,'clickData_kinetics':clickData_kinetics,'n_clicks_submit':n_clicks_submit,'n_clicks_filter':n_clicks_filter}
+        general_data[session_id] = {'min-time':min_time,'max-time':max_time,'percent_substrate_value':percent_substrate_value,'clickData_linear':clickData_linear,'clickData_kinetics':clickData_kinetics,'n_clicks_submit':n_clicks_submit,'n_clicks_filter':n_clicks_filter,'p0_c':p0_c,'p0_s0':p0_s0,'p0_k':p0_k}
 
     update_time = False 
     if n_clicks_submit==general_data[session_id]['n_clicks_submit']:
@@ -675,7 +695,8 @@ def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickDa
         update_linear = False
         general_data[session_id]['clickData_kinetics'] = clickData_kinetics
     linear_traces = update_linear_graph_global(timeslider_value,session_id,fit_type,clickData_linear = clickData_linear, max_percent_substrate=percent_substrate_value,
-            filters={'enzyme':enzyme_filter,'conc_uM':conc_filter,'replicate':rep_filter,'date':date_filter},update_time=update_time,update_linear=update_linear)
+            filters={'enzyme':enzyme_filter,'conc_uM':conc_filter,'replicate':rep_filter,'date':date_filter},update_time=update_time,update_linear=update_linear,p0_c=float(p0_c),\
+                    p0_s0=float(p0_s0),p0_k=float(p0_k))
     linear_output = {
         'data': linear_traces,
         'layout': go.Layout(
@@ -696,9 +717,14 @@ def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickDa
     Update nonlinear graph
     """
     try:
-        nonlinear_traces = update_kinetics_graph_global(timeslider_value,session_id,clickData_kinetics=clickData_kinetics)[0]
+        kinetics_update = update_kinetics_graph_global(timeslider_value,session_id,clickData_kinetics=clickData_kinetics)
+        nonlinear_traces = kinetics_update[0]
+        optimizedParameters = kinetics_update[1]
+        errorParameters = kinetics_update[2]
     except:
         nonlinear_traces = None
+        optimizedParameters = None
+        errorParameters = None
 
     nonlinear_output = {
         'data':nonlinear_traces,
@@ -716,17 +742,14 @@ def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickDa
     """
     Update table
     """
-    try:
-        optimizedParameters = update_kinetics_graph_global(timeslider_value,session_id)[1]
-    except:
-        optimizedParameters = None
     table_data = []
-    if optimizedParameters:
+    if optimizedParameters and errorParameters:
         for enzyme in optimizedParameters:
             table_data.append({'enzyme':enzyme, 'km':optimizedParameters[enzyme][0]\
-                    , 'kcat':optimizedParameters[enzyme][1]})
+                    ,'km stdev':errorParameters[enzyme][0], 'kcat':optimizedParameters[enzyme][1],\
+                    'kcat stdev':errorParameters[enzyme][1]})
 
-    general_data[session_id] = {'min-time':min_time,'max-time':max_time,'percent_substrate_value':percent_substrate_value,'clickData_linear':clickData_linear,'clickData_kinetics':clickData_kinetics,'n_clicks_submit':n_clicks_submit,'n_clicks_filter':n_clicks_filter}
+    general_data[session_id] = {'min-time':min_time,'max-time':max_time,'percent_substrate_value':percent_substrate_value,'clickData_linear':clickData_linear,'clickData_kinetics':clickData_kinetics,'n_clicks_submit':n_clicks_submit,'n_clicks_filter':n_clicks_filter,'p0_c':p0_c,'p0_s0':p0_s0,'p0_k':p0_k}
     return linear_output, nonlinear_output, table_data
 
 
