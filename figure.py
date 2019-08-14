@@ -1,14 +1,24 @@
+
+"""
+
+Usage:
+    kinetics.py [options] (<csv>...)
+
+"""
 import numpy as np
+import pandas as pd
 from klab import docopt
 import matplotlib.pyplot as plt
-from kinetics import load_dataframe
+#from kinetics import load_dataframe
+
 
 def func(S, Km, Vmax):
     V0 = (Vmax * S) / (Km + S)
     return V0
 
-def setup_data:
-
+'''
+def setup_data():
+    # Probably don't need this function
     args = docopt.docopt(__doc__)
     if os.path.isfile(args['<bio96_metadata>']):
         data = bio96.load(args['<bio96_metadata>'],load_dataframe,{'well':'variable'})[0]
@@ -32,11 +42,24 @@ def setup_data:
     data['clicked_kinetics'] = False
     data['slope'] = 1
     return data
+'''
+def import_data():
+    args = docopt.docopt(__doc__)
+    dataframes = []
+    for csv in args['<csv>']:
+        subdata = pd.read_csv(csv)
+        dataframes.append(subdata)
+    return pd.concat(dataframes, ignore_index=True)
 
+
+# Grab data
+data = import_data()
+# Get rid of excluded points
+data = data[data['clicked_kinetics']==False]
 # Create data
 N = 500
-x = np.random.rand(N)
-y = np.random.rand(N)
+x = data['conc_uM']
+y = data['slope']
 colors = (0,0,0)
 area = np.pi*3
 
