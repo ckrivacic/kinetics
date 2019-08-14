@@ -43,7 +43,7 @@ in the bio96 file):
 
 import pandas as pd
 from klab import docopt
-import scipy
+import scipy, plotly
 from scipy import stats
 import numpy as np
 import pickle as pkl
@@ -353,7 +353,7 @@ def serve_layout(data):
         html.Div(session_id,id='session_id',
             style={'display':'none','padding':10})
 
-        ],style={'padding':10})
+        ],style={'padding':100})
 
 app.layout = serve_layout(data)
 
@@ -394,6 +394,36 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
     color_cycle = cycle(colors)
     current_color = colors[0]
 
+    if args['--zerokinetics']:
+        try:
+            zero_df = local_data[local_data['conc_uM']==0]
+            zgroups = zero_df.groupby(['enzyme','date'])
+            groupdict = {}
+            for name,group in zgroups:
+                if name[0] not in groupdict:
+                    groupdict[name[0]]={}
+                if name[1] not in groupdict[name[0]]:
+                    groupdict[name[0]][name[1]]={}
+                groupdict[name[0]][name[1]]=group
+            for index, row in local_data.iterrows():
+                enzyme = row['enzyme']
+                date = row['date']
+                replicate = row['replicate']
+                conc = row['conc_uM']
+                slope = row['slope']
+
+                try:
+                    zdf = groupdict[enzyme][date]
+                    zero = zdf[zdf['clicked_kinetics']==False]['slope'].tolist()
+                    #zero= zdf['slope'].tolist()
+                    zavg = sum(zero) / len(zero)
+
+                    row['slope'] = row['slope'] - zavg
+                    local_data.iloc[index] = row
+                except:
+                    break
+        except:
+            print("skipping zeroing")
     for name, group in local_data.groupby(['date','enzyme','clicked_kinetics'],sort=True):
         if name[2] == False:
             current_color = next(color_cycle)
@@ -428,7 +458,7 @@ def update_kinetics_graph_global(value,session_id,clickData_kinetics=None):
     return nonlinear_traces, optimizedParameters_dict, err_dict
 
 
-@cache.memoize()
+#@cache.memoize()
 def update_linear_graph_global(value,session_id,fit_type='linear',clickData_linear=None,max_percent_substrate=None,
         filters={'enzyme':[],'conc_uM':[],'replicate':[],'date':[]},update_time=True,update_linear=True,p0_c=50,p0_s0=30,p0_k=0.01):
 
@@ -578,34 +608,6 @@ def update_linear_graph_global(value,session_id,fit_type='linear',clickData_line
 
             dict_list.append(dict1)
         kinetics_df = pd.DataFrame(dict_list)
-        if args['--zerokinetics']:
-            try:
-                zero_df = kinetics_df[kinetics_df['conc_uM']==0]
-                zgroups = zero_df.groupby(['enzyme','date','replicate'])
-                groupdict = {}
-                for name,group in zgroups:
-                    if name[0] not in groupdict:
-                        groupdict[name[0]]={}
-                    if name[1] not in groupdict[name[0]]:
-                        groupdict[name[0]][name[1]]={}
-                    groupdict[name[0]][name[1]][name[2]]=group
-                for index, row in kinetics_df.iterrows():
-                    enzyme = row['enzyme']
-                    date = row['date']
-                    replicate = row['replicate']
-                    conc = row['conc_uM']
-                    slope = row['slope']
-
-                    try:
-                        zdf = groupdict[enzyme][date][replicate]
-                        zero= zdf['slope'].tolist()[0]
-
-                        row['slope'] = row['slope'] - zero
-                        kinetics_df.iloc[index] = row
-                    except:
-                        break
-            except:
-                print("skipping zeroing")
 
         kinetics_df['clicked_kinetics'] = False
 
@@ -732,7 +734,7 @@ def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickDa
             xaxis={
                 'title':'Concentration (uM)'
             },
-            yaxis={'title':'V0'},
+            yaxis={'title':'','position':0},
             margin={'l':40,'b':40,'t':100,'r':10},
             hovermode='closest',
             title='Michaelis-Menten Kinetics'
@@ -755,4 +757,5 @@ def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickDa
 
 
 if __name__ == '__main__':
+
     app.run_server(debug=True,host='0.0.0.0',port=8080)
