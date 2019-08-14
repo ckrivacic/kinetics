@@ -331,6 +331,9 @@ def serve_layout(data):
 
             dcc.Graph(id='kinetics-graph'),
 
+            dcc.Input(id='outfile',type='text',value='type save path here'),
+            html.Button(id='save-kinetics-data',n_clicks=0,children='Save kinetics data'),
+
             dash_table.DataTable(id='kinetics-table',
                 columns=(
                     [{'id':'enzyme','name':'Enzyme'},
