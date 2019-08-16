@@ -79,7 +79,7 @@ def plot_stuff(graphWidth, graphHeight):
     # Label parameters
     axes.set_ylim([ymin, ymax])
     axes.set_xlim([xmin, xmax])
-    axes.tick_params(width=2,length=8)
+    axes.tick_params(width=2,length=6)
     axes.tick_params(axis='y',which='both',labelleft=True,labelright=False,right=True)
     axes.ticklabel_format(axis='y',style='sci',scilimits=(0,0))
     axes.yaxis.set_major_formatter(mtick.FormatStrFormatter('%.1e'))
@@ -87,8 +87,8 @@ def plot_stuff(graphWidth, graphHeight):
     axes.yaxis.set_tick_params(direction='in')
 
     plt.xlabel('[5(10) estrene-dione], μM')
-    plt.ylabel('V$_{0}$, s$^{-1}$')
+    plt.ylabel('V$_{0}$/[E], s$^{-1}$')
 
     plt.show()
 
-plot_stuff(800,600)
+plot_stuff(900,600)
