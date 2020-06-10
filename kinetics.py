@@ -6,6 +6,8 @@ Usage:
 
 Options (needs updating; some/most are depreciated and should instead be set
 in the bio96 file):
+    --min  Time is in minutes (for cuvette reads)
+
     --conversion-factor NUMBER, -e NUMBER   [default: 1.0]
         Your units in the csv file will be divided by this.
         It is assumed that this will result in product concentration 
@@ -53,6 +55,7 @@ import os, bio96, sys
 args = docopt.docopt(__doc__)
 
 def convert_time(x):
+    print(x)
     seconds = float(x[0]) * 3600 + float(x[1]) * 60 + float(x[2])
     return seconds
 
@@ -88,10 +91,13 @@ def load_dataframe(path):
     #data = data.dropna()
     # Get time in units of seconds
     
-    data['Time'] = data['Time'].str.split(':').apply(lambda x:\
-            convert_time(x))
-            #float(x[0]) * 3600 + float(x[1])\
-            #* 60 + float(x[2]))
+    if args['--min']:
+        data['Time'] = data['Time'] * 60
+    else:
+        data['Time'] = data['Time'].str.split(':').apply(lambda x:\
+                convert_time(x))
+                #float(x[0]) * 3600 + float(x[1])\
+                #* 60 + float(x[2]))
 
     for col in data:
         data[col] = pd.to_numeric(data[col])
@@ -665,6 +671,7 @@ Update linear graph
             dash.dependencies.Input('filter-button','n_clicks'),
             dash.dependencies.Input('linear-graph','clickData'),
             dash.dependencies.Input('kinetics-graph','clickData'),
+            dash.dependencies.Input('save-kinetics-data','n_clicks'),
         ],
         [
             dash.dependencies.State('session_id','children'),
@@ -678,16 +685,18 @@ Update linear graph
             dash.dependencies.State('date-dropdown','value'),
             dash.dependencies.State('p0-c','value'),
             dash.dependencies.State('p0-s0','value'),
-            dash.dependencies.State('p0-k','value')
+            dash.dependencies.State('p0-k','value'),
+            dash.dependencies.State('outfile','value'),
             ])
-def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickData_kinetics,session_id,percent_substrate_value,min_time,max_time,fit_type,
-        enzyme_filter,conc_filter,rep_filter,date_filter,p0_c,p0_s0,p0_k):
+def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickData_kinetics,n_clicks_save_kinetics,session_id,percent_substrate_value,min_time,max_time,fit_type,
+        enzyme_filter,conc_filter,rep_filter,date_filter,p0_c,p0_s0,p0_k,kinetics_outfile):
     """
     Update linear graph
     """
     timeslider_value = [min_time,max_time]
     if not session_id in general_data:
-        general_data[session_id] = {'min-time':min_time,'max-time':max_time,'percent_substrate_value':percent_substrate_value,'clickData_linear':clickData_linear,'clickData_kinetics':clickData_kinetics,'n_clicks_submit':n_clicks_submit,'n_clicks_filter':n_clicks_filter,'p0_c':p0_c,'p0_s0':p0_s0,'p0_k':p0_k}
+        general_data[session_id] = {'min-time':min_time,'max-time':max_time,'percent_substrate_value':percent_substrate_value,'clickData_linear':clickData_linear,'clickData_kinetics':clickData_kinetics,'n_clicks_submit':n_clicks_submit,'n_clicks_filter':n_clicks_filter,'p0_c':p0_c,'p0_s0':p0_s0,'p0_k':p0_k,'n_clicks_save_kinetics':n_clicks_save_kinetics}
+
 
     update_time = False 
     if n_clicks_submit==general_data[session_id]['n_clicks_submit']:
@@ -696,9 +705,14 @@ def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickDa
         update_time = True
    
     update_linear = True
+    if not n_clicks_save_kinetics==general_data[session_id]['n_clicks_save_kinetics']:
+        update_linear = False
+
     if clickData_kinetics != general_data[session_id]['clickData_kinetics']:
         update_linear = False
         general_data[session_id]['clickData_kinetics'] = clickData_kinetics
+
+
     linear_traces = update_linear_graph_global(timeslider_value,session_id,fit_type,clickData_linear = clickData_linear, max_percent_substrate=percent_substrate_value,
             filters={'enzyme':enzyme_filter,'conc_uM':conc_filter,'replicate':rep_filter,'date':date_filter},update_time=update_time,update_linear=update_linear,p0_c=float(p0_c),\
                     p0_s0=float(p0_s0),p0_k=float(p0_k))
@@ -744,6 +758,12 @@ def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickDa
          )
     }
 
+    if not n_clicks_save_kinetics==general_data[session_id]['n_clicks_save_kinetics']:
+        general_data[session_id]['n_clicks_save_kinetics'] = n_clicks_save_kinetics
+        kinetics_df = kinetics_data[session_id]
+        #pkl.dump(kinetics_df, kinetics_outfile)
+        kinetics_df.to_csv(kinetics_outfile)
+
     """
     Update table
     """
@@ -754,7 +774,7 @@ def update_linear_graph(n_clicks_submit,n_clicks_filter,clickData_linear,clickDa
                     ,'km stdev':errorParameters[enzyme][0], 'kcat':optimizedParameters[enzyme][1],\
                     'kcat stdev':errorParameters[enzyme][1]})
 
-    general_data[session_id] = {'min-time':min_time,'max-time':max_time,'percent_substrate_value':percent_substrate_value,'clickData_linear':clickData_linear,'clickData_kinetics':clickData_kinetics,'n_clicks_submit':n_clicks_submit,'n_clicks_filter':n_clicks_filter,'p0_c':p0_c,'p0_s0':p0_s0,'p0_k':p0_k}
+    general_data[session_id] = {'min-time':min_time,'max-time':max_time,'percent_substrate_value':percent_substrate_value,'clickData_linear':clickData_linear,'clickData_kinetics':clickData_kinetics,'n_clicks_submit':n_clicks_submit,'n_clicks_filter':n_clicks_filter,'p0_c':p0_c,'p0_s0':p0_s0,'p0_k':p0_k,'n_clicks_save_kinetics':n_clicks_save_kinetics}
     return linear_output, nonlinear_output, table_data
 
 
