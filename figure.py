@@ -4,11 +4,14 @@
 Usage:
     kinetics.py [options] (<csv>...)
 
+Options:
+    --hline=NUM  Draw a dashed horizontal line at this number
+
 """
 import numpy as np
 import pandas as pd
 import scipy.optimize as opt
-from klab import docopt
+import docopt
 from itertools import cycle
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
@@ -27,11 +30,14 @@ def import_data():
         dataframes.append(subdata)
     return pd.concat(dataframes, ignore_index=True)
 
+args = docopt.docopt(__doc__)
 
 # Grab data
 data = import_data()
+# convert from s-1 to hr-1
+data['slope'] = data['slope'] * 3600
 # Get rid of excluded points
-data = data[data['clicked_kinetics']==False]
+# data = data[data['clicked_kinetics']==False]
 # Create data
 parsed_data = []
 fits = []
@@ -53,8 +59,11 @@ xmax = max(data['conc_uM']) + 0.05 * max(data['conc_uM'])
 xmin = min(data['conc_uM']) - 0.05 * max(data['conc_uM'])
 
 # Colors
-point_colors = cycle(['#C5523C', '#4BA0C1'])
-line_colors = cycle(['#F06449', '#5BC3EB'])
+# point_colors = cycle(['#C5523C', '#4BA0C1'])
+# line_colors = cycle(['#F06449', '#5BC3EB'])
+point_colors = cycle(['black'])
+line_colors = cycle(['black'])
+
 area = 4*np.pi*3
 
 def plot_stuff(graphWidth, graphHeight):
@@ -74,20 +83,23 @@ def plot_stuff(graphWidth, graphHeight):
     for fit in fits:
         axes.plot(fit[0],fit[1], c=next(line_colors))
 
-    pyplot.hlines(0,xmin,xmax,linestyles='dashed',label='')
+    #pyplot.hlines(0,xmin,xmax,linestyles='solid',label='')
+    if args['--hline']:
+        pyplot.hlines(float(args['--hline']), xmin, xmax,
+                linestyles='dashed', label='E38D')
 
     # Label parameters
     axes.set_ylim([ymin, ymax])
     axes.set_xlim([xmin, xmax])
     axes.tick_params(width=2,length=6)
     axes.tick_params(axis='y',which='both',labelleft=True,labelright=False,right=True)
-    axes.ticklabel_format(axis='y',style='sci',scilimits=(0,0))
-    axes.yaxis.set_major_formatter(mtick.FormatStrFormatter('%.1e'))
+    #axes.ticklabel_format(axis='y',style='sci',scilimits=(0,0))
+    #axes.yaxis.set_major_formatter(mtick.FormatStrFormatter('%.1e'))
     axes.xaxis.set_tick_params(direction='in')
     axes.yaxis.set_tick_params(direction='in')
 
-    plt.xlabel('[5(10) estrene-dione], μM')
-    plt.ylabel('V$_{0}$/[E], s$^{-1}$')
+    plt.xlabel('[5(10) estrene-dione], μM', size=15)
+    plt.ylabel('V$_{0}$/[E], hr$^{-1}$', size=15)
 
     plt.show()
 
