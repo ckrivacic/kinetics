@@ -1,11 +1,9 @@
 
 """
-
 Usage:
-    kinetics.py [options] (--load <pklfile> | <bio96_metadata>...)
+    kinetics.py (--load <pklfile> | <bio96_metadata>...) [options]
 
-Options (needs updating; some/most are depreciated and should instead be set
-in the bio96 file):
+Options:
     --min  Time is in minutes (for cuvette reads)
 
     --conversion-factor NUMBER, -e NUMBER   [default: 1.0]
@@ -42,15 +40,17 @@ in the bio96 file):
         List or range of rows to skip. 
         Ex: 3 5 7:12
 """
+#Options (needs updating; some/most are depreciated and should instead be set
+#in the bio96 file):
 
 import pandas as pd
-from klab import docopt
 import scipy, plotly
 from scipy import stats
 import numpy as np
 import pickle as pkl
 import scipy.optimize as opt
 import os, bio96, sys
+import docopt
 
 args = docopt.docopt(__doc__)
 
@@ -540,6 +540,8 @@ def update_linear_graph_global(value,session_id,fit_type='linear',clickData_line
                 try:
                     slope, intercept, r_value, p_value, std_err = stats.linregress(xi,yi)
                     line = slope * xi + intercept
+                    print('Slope: {}, Intercept: {}'.format(slope,
+                        intercept))
                     if len(xi) > 3:
                         rows_to_add_to_kinetics_df.append([enzyme, conc, slope/enzyme_conc,
                                 replicate,date])
@@ -612,6 +614,8 @@ def update_linear_graph_global(value,session_id,fit_type='linear',clickData_line
             dict1['enzyme'] = row[0]
             dict1['conc_uM'] = row[1]
             dict1['slope'] = row[2]
+            print('Slope for {}: {}'.format(dict1['enzyme'],
+                dict1['slope']))
             dict1['replicate'] = row[3]
             dict1['date'] = row[4]
 
