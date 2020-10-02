@@ -86,7 +86,7 @@ def plot_stuff(graphWidth, graphHeight):
     #pyplot.hlines(0,xmin,xmax,linestyles='solid',label='')
     if args['--hline']:
         pyplot.hlines(float(args['--hline']), xmin, xmax,
-                linestyles='dashed', label='E38D')
+                linestyles='dashed', label='E38D', color='firebrick')
 
     # Label parameters
     axes.set_ylim([ymin, ymax])
