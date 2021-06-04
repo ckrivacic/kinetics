@@ -34,8 +34,8 @@ args = docopt.docopt(__doc__)
 
 # Grab data
 data = import_data()
-# convert from s-1 to hr-1
-data['slope'] = data['slope'] * 3600
+# convert from s-1 to min-1
+data['slope'] = data['slope'] * 60
 # Get rid of excluded points
 # data = data[data['clicked_kinetics']==False]
 # Create data
@@ -102,7 +102,7 @@ def plot_stuff(graphWidth, graphHeight):
     axes.tick_params(axis='both', which='major', labelsize=18)
 
     plt.xlabel('[5(10) estrene-dione], μM', size=20)
-    plt.ylabel('V$_{0}$/[E], hr$^{-1}$', size=20)
+    plt.ylabel('V$_{0}$/[E], min$^{-1}$', size=20)
 
     plt.show()
 
